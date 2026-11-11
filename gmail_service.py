@@ -2,6 +2,7 @@ import os
 import re
 import base64
 import html
+import json
 
 from google.auth.transport.requests import Request
 from google.auth.exceptions import RefreshError
@@ -160,25 +161,53 @@ def build_query():
 # ---------- 1. Login ----------
 
 def get_gmail_service():
-    creds = None
-
-    # Reuse the saved login if we have one
-    if os.path.exists("token.json"):
+    # Streamlit Community Cloud has no local credentials file or browser to
+    # complete the installed-app OAuth flow. Provide the existing authorized
+    # token.json contents as the GMAIL_TOKEN_JSON secret there.
+    token_secret = os.getenv("GMAIL_TOKEN_JSON")
+    if token_secret:
+        try:
+            creds = Credentials.from_authorized_user_info(
+                json.loads(token_secret), SCOPES
+            )
+        except (json.JSONDecodeError, ValueError, KeyError) as exc:
+            raise RuntimeError(
+                "GMAIL_TOKEN_JSON in Streamlit Secrets must contain the full "
+                "contents of a valid Google token.json file."
+            ) from exc
+    elif os.path.exists("token.json"):
         creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+    else:
+        creds = None
 
     if not creds or not creds.valid:
-        try:
-            if creds and creds.expired and creds.refresh_token:
+        if creds and creds.expired and creds.refresh_token:
+            try:
                 creds.refresh(Request())
-            else:
-                raise RefreshError("No valid token")
-        except RefreshError:
-            # Opens the browser so you can log in with Google
+            except RefreshError as exc:
+                if token_secret:
+                    raise RuntimeError(
+                        "The Gmail token in Streamlit Secrets could not be "
+                        "refreshed. Re-authorize Gmail locally and replace "
+                        "GMAIL_TOKEN_JSON with the new token.json contents."
+                    ) from exc
+                raise
+        else:
+            # The installed-app flow opens a browser and is only suitable for
+            # local development, not a hosted Streamlit app.
+            if not os.path.exists("credentials.json"):
+                raise RuntimeError(
+                    "Gmail is not configured. Add GMAIL_TOKEN_JSON to "
+                    "Streamlit Secrets using the contents of your authorized "
+                    "token.json file."
+                )
             flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
             creds = flow.run_local_server(port=0)
 
-        # Save the login for next time
-        with open("token.json", "w") as f:
+    # Keep local credentials fresh on disk. Streamlit Cloud gets its token
+    # from Secrets and should never rely on a generated local file persisting.
+    if not token_secret:
+        with open("token.json", "w", encoding="utf-8") as f:
             f.write(creds.to_json())
 
     return build("gmail", "v1", credentials=creds)
