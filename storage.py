@@ -61,14 +61,15 @@ def load_postgres_cache():
             if legacy_cache:
                 from psycopg.types.json import Jsonb
 
-                connection.executemany(
-                    f"""
-                    INSERT INTO {TABLE_NAME} (email_id, payload)
-                    VALUES (%s, %s)
-                    ON CONFLICT (email_id) DO NOTHING
-                    """,
-                    [(email_id, Jsonb(payload)) for email_id, payload in legacy_cache.items()],
-                )
+                with connection.cursor() as cursor:
+                    cursor.executemany(
+                        f"""
+                        INSERT INTO {TABLE_NAME} (email_id, payload)
+                        VALUES (%s, %s)
+                        ON CONFLICT (email_id) DO NOTHING
+                        """,
+                        [(email_id, Jsonb(payload)) for email_id, payload in legacy_cache.items()],
+                    )
                 rows = connection.execute(
                     f"SELECT email_id, payload FROM {TABLE_NAME}"
                 ).fetchall()
@@ -81,16 +82,17 @@ def save_postgres_cache(cache):
     with _connect() as connection:
         _ensure_table(connection)
         if cache:
-            connection.executemany(
-                f"""
-                INSERT INTO {TABLE_NAME} (email_id, payload)
-                VALUES (%s, %s)
-                ON CONFLICT (email_id) DO UPDATE SET
-                    payload = EXCLUDED.payload,
-                    updated_at = NOW()
-                """,
-                [(email_id, Jsonb(payload)) for email_id, payload in cache.items()],
-            )
+            with connection.cursor() as cursor:
+                cursor.executemany(
+                    f"""
+                    INSERT INTO {TABLE_NAME} (email_id, payload)
+                    VALUES (%s, %s)
+                    ON CONFLICT (email_id) DO UPDATE SET
+                        payload = EXCLUDED.payload,
+                        updated_at = NOW()
+                    """,
+                    [(email_id, Jsonb(payload)) for email_id, payload in cache.items()],
+                )
 
 
 def load_cache():
