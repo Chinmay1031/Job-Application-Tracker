@@ -52,6 +52,26 @@ def load_postgres_cache():
         rows = connection.execute(
             f"SELECT email_id, payload FROM {TABLE_NAME}"
         ).fetchall()
+
+        # On first use in Streamlit Cloud, preserve its existing runtime cache
+        # if it is still present. This must happen before switching the app to
+        # PostgreSQL, and only when the database is empty.
+        if not rows:
+            legacy_cache = load_json_cache()
+            if legacy_cache:
+                from psycopg.types.json import Jsonb
+
+                connection.executemany(
+                    f"""
+                    INSERT INTO {TABLE_NAME} (email_id, payload)
+                    VALUES (%s, %s)
+                    ON CONFLICT (email_id) DO NOTHING
+                    """,
+                    [(email_id, Jsonb(payload)) for email_id, payload in legacy_cache.items()],
+                )
+                rows = connection.execute(
+                    f"SELECT email_id, payload FROM {TABLE_NAME}"
+                ).fetchall()
     return {email_id: payload for email_id, payload in rows}
 
 
