@@ -8,12 +8,12 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from gmail_service import get_gmail_service, build_query, search_emails, get_email_details
+from storage import load_cache, save_cache
 
 load_dotenv()
 client = OpenAI()
 
 MODEL = os.getenv("OPENAI_MODEL", "gpt-5-mini")
-CACHE_FILE = "applications.json"
 MAX_BODY_CHARS = 5000
 
 STATUS_MAP = {
@@ -60,18 +60,6 @@ def _parse_date(date_header):
         return parsedate_to_datetime(date_header).strftime("%Y-%m-%d")
     except Exception:
         return ""
-
-
-def load_cache():
-    if os.path.exists(CACHE_FILE):
-        with open(CACHE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
-
-
-def save_cache(cache):
-    with open(CACHE_FILE, "w", encoding="utf-8") as f:
-        json.dump(cache, f, indent=2, ensure_ascii=False)
 
 
 def _normalize_company(name):
