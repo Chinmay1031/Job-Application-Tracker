@@ -1,5 +1,7 @@
 import os
 import json
+import re
+import unicodedata
 from email.utils import parsedate_to_datetime
 
 from dotenv import load_dotenv
@@ -75,11 +77,19 @@ def save_cache(cache):
 def _normalize_company(name):
     if not name:
         return ""
-    name = name.lower().strip()
-    for suffix in [" gmbh", " ag", " group", " inc", " inc.", " ltd", " se", " kg", " co"]:
-        if name.endswith(suffix):
-            name = name[: -len(suffix)].strip()
-    return name
+    name = unicodedata.normalize("NFKC", str(name)).casefold()
+    name = re.sub(r"[^\w\s]", " ", name)
+    words = name.split()
+
+    # Remove common legal suffixes without making punctuation or spacing
+    # differences prevent a match (e.g. "BCG Platinion GmbH" vs "BCG Platinion").
+    suffixes = {
+        "gmbh", "ag", "group", "inc", "ltd", "limited", "se", "kg",
+        "co", "llc", "plc", "corp", "corporation",
+    }
+    while words and words[-1] in suffixes:
+        words.pop()
+    return " ".join(words)
 
 
 # ---------- Ask OpenAI about one email ----------
@@ -123,15 +133,35 @@ def find_matching_application(cache, update):
     if not target_company or target_company == "unknown":
         return None
 
-    candidates = [
+    applications = [
         (eid, entry)
         for eid, entry in cache.items()
         if entry.get("is_application")
         and not entry.get("deleted")
-        and _normalize_company(entry.get("company", "")) == target_company
     ]
-    if not candidates:
+    if not applications:
         return None
+
+    # Prefer exact normalized names. If the email classifier returns a short
+    # form such as "BCG" while the saved row says "BCG Platinion", allow a
+    # token-subset match only when it identifies exactly one existing row.
+    exact_candidates = [
+        (eid, entry)
+        for eid, entry in applications
+        if _normalize_company(entry.get("company", "")) == target_company
+    ]
+    candidates = exact_candidates
+    if not candidates:
+        target_words = set(target_company.split())
+        related_candidates = []
+        if target_words:
+            for eid, entry in applications:
+                company_words = set(_normalize_company(entry.get("company", "")).split())
+                if company_words and (target_words <= company_words or company_words <= target_words):
+                    related_candidates.append((eid, entry))
+        if len(related_candidates) != 1:
+            return None
+        candidates = related_candidates
 
     update_title = (update.get("job_title") or "").lower()
     if update_title and update_title != "unknown":
