@@ -180,29 +180,40 @@ def get_gmail_service():
     else:
         creds = None
 
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            try:
-                creds.refresh(Request())
-            except RefreshError as exc:
-                if token_secret:
-                    raise RuntimeError(
-                        "The Gmail token in Streamlit Secrets could not be "
-                        "refreshed. Re-authorize Gmail locally and replace "
-                        "GMAIL_TOKEN_JSON with the new token.json contents."
-                    ) from exc
-                raise
-        else:
-            # The installed-app flow opens a browser and is only suitable for
-            # local development, not a hosted Streamlit app.
-            if not os.path.exists("credentials.json"):
+    if creds and not creds.valid and creds.expired and creds.refresh_token:
+        try:
+            creds.refresh(Request())
+        except RefreshError as exc:
+            if token_secret:
                 raise RuntimeError(
-                    "Gmail is not configured. Add GMAIL_TOKEN_JSON to "
-                    "Streamlit Secrets using the contents of your authorized "
-                    "token.json file."
-                )
-            flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
-            creds = flow.run_local_server(port=0)
+                    "Google rejected the Gmail refresh token in Streamlit "
+                    "Secrets; it may be expired or revoked. If your OAuth "
+                    "consent screen is in Testing, Gmail refresh tokens "
+                    "expire after 7 days. Move the OAuth app to In production, "
+                    "reauthorize Gmail locally, and replace GMAIL_TOKEN_JSON "
+                    "in Streamlit Secrets with the new token.json contents."
+                ) from exc
+            # A local refresh token can also be revoked or expired. Fall back
+            # to the installed-app flow to obtain a fresh local authorization.
+            creds = None
+
+    if not creds or not creds.valid:
+        # The installed-app flow opens a browser and is only suitable for
+        # local development, not a hosted Streamlit app.
+        if token_secret:
+            raise RuntimeError(
+                "GMAIL_TOKEN_JSON in Streamlit Secrets has no usable Gmail "
+                "authorization. Reauthorize Gmail locally and replace it "
+                "with the new token.json contents."
+            )
+        if not os.path.exists("credentials.json"):
+            raise RuntimeError(
+                "Gmail is not configured. Add GMAIL_TOKEN_JSON to "
+                "Streamlit Secrets using the contents of your authorized "
+                "token.json file."
+            )
+        flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
+        creds = flow.run_local_server(port=0)
 
     # Keep local credentials fresh on disk. Streamlit Cloud gets its token
     # from Secrets and should never rely on a generated local file persisting.
